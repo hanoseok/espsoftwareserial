@@ -35,17 +35,17 @@ extern "C" {
 // and callbacks corresponding to each possible GPIO pins have to be defined
 SoftwareSerial *ObjList[MAX_PIN+1];
 
-void ICACHE_RAM_ATTR sws_isr_0() { ObjList[0]->rxRead(); };
-void ICACHE_RAM_ATTR sws_isr_1() { ObjList[1]->rxRead(); };
-void ICACHE_RAM_ATTR sws_isr_2() { ObjList[2]->rxRead(); };
-void ICACHE_RAM_ATTR sws_isr_3() { ObjList[3]->rxRead(); };
-void ICACHE_RAM_ATTR sws_isr_4() { ObjList[4]->rxRead(); };
-void ICACHE_RAM_ATTR sws_isr_5() { ObjList[5]->rxRead(); };
+void sws_isr_0() { ObjList[0]->rxRead(); };
+void sws_isr_1() { ObjList[1]->rxRead(); };
+void sws_isr_2() { ObjList[2]->rxRead(); };
+void sws_isr_3() { ObjList[3]->rxRead(); };
+void sws_isr_4() { ObjList[4]->rxRead(); };
+void sws_isr_5() { ObjList[5]->rxRead(); };
 // Pin 6 to 11 can not be used
-void ICACHE_RAM_ATTR sws_isr_12() { ObjList[12]->rxRead(); };
-void ICACHE_RAM_ATTR sws_isr_13() { ObjList[13]->rxRead(); };
-void ICACHE_RAM_ATTR sws_isr_14() { ObjList[14]->rxRead(); };
-void ICACHE_RAM_ATTR sws_isr_15() { ObjList[15]->rxRead(); };
+void sws_isr_12() { ObjList[12]->rxRead(); };
+void sws_isr_13() { ObjList[13]->rxRead(); };
+void sws_isr_14() { ObjList[14]->rxRead(); };
+void sws_isr_15() { ObjList[15]->rxRead(); };
 
 static void (*ISRList[MAX_PIN+1])() = {
       sws_isr_0,
@@ -70,8 +70,6 @@ SoftwareSerial::SoftwareSerial(int receivePin, int transmitPin, bool inverse_log
    m_rxValid = m_txValid = m_txEnableValid = false;
    m_buffer = NULL;
    m_invert = inverse_logic;
-   m_overflow = false;
-   m_rxEnabled = false;
    if (isValidGPIOpin(receivePin)) {
       m_rxPin = receivePin;
       m_buffSize = buffSize;
@@ -108,14 +106,8 @@ bool SoftwareSerial::isValidGPIOpin(int pin) {
 
 void SoftwareSerial::begin(long speed) {
    // Use getCycleCount() loop to get as exact timing as possible
-   m_bitTime = ESP.getCpuFreqMHz()*1000000/speed;
-
-   if (!m_rxEnabled)
-     enableRx(true);
-}
-
-long SoftwareSerial::baudRate() {
-   return ESP.getCpuFreqMHz()*1000000/m_bitTime;
+   //m_bitTime = ESP.getCpuFreqMHz()*1000000/speed;
+   m_bitTime = system_get_cpu_freq()*1000000/speed;
 }
 
 void SoftwareSerial::setTransmitEnablePin(int transmitEnablePin) {
@@ -135,7 +127,6 @@ void SoftwareSerial::enableRx(bool on) {
          attachInterrupt(m_rxPin, ISRList[m_rxPin], m_invert ? RISING : FALLING);
       else
          detachInterrupt(m_rxPin);
-      m_rxEnabled = on;
    }
 }
 
@@ -153,7 +144,7 @@ int SoftwareSerial::available() {
    return avail;
 }
 
-#define WAIT { while (ESP.getCycleCount()-start < wait); wait += m_bitTime; }
+#define WAIT { while (getCycleCount()-start < wait); wait += m_bitTime; }
 
 size_t SoftwareSerial::write(uint8_t b) {
    if (!m_txValid) return 0;
@@ -164,7 +155,7 @@ size_t SoftwareSerial::write(uint8_t b) {
    if (m_txEnableValid) digitalWrite(m_txEnablePin, HIGH);
    unsigned long wait = m_bitTime;
    digitalWrite(m_txPin, HIGH);
-   unsigned long start = ESP.getCycleCount();
+   unsigned long start = getCycleCount();
     // Start bit;
    digitalWrite(m_txPin, LOW);
    WAIT;
@@ -185,22 +176,16 @@ void SoftwareSerial::flush() {
    m_inPos = m_outPos = 0;
 }
 
-bool SoftwareSerial::overflow() {
-   bool res = m_overflow;
-   m_overflow = false;
-   return res;
-}
-
 int SoftwareSerial::peek() {
    if (!m_rxValid || (m_inPos == m_outPos)) return -1;
    return m_buffer[m_outPos];
 }
 
-void ICACHE_RAM_ATTR SoftwareSerial::rxRead() {
+void SoftwareSerial::rxRead() {
    // Advance the starting point for the samples but compensate for the
    // initial delay which occurs before the interrupt is delivered
    unsigned long wait = m_bitTime + m_bitTime/3 - 500;
-   unsigned long start = ESP.getCycleCount();
+   unsigned long start = getCycleCount();
    uint8_t rec = 0;
    for (int i = 0; i < 8; i++) {
      WAIT;
@@ -213,11 +198,9 @@ void ICACHE_RAM_ATTR SoftwareSerial::rxRead() {
    WAIT;
    // Store the received value in the buffer unless we have an overflow
    int next = (m_inPos+1) % m_buffSize;
-   if (next != m_outPos) {
+   if (next != m_inPos) {
       m_buffer[m_inPos] = rec;
       m_inPos = next;
-   } else {
-      m_overflow = true;
    }
    // Must clear this bit in the interrupt register,
    // it gets set even when interrupts are disabled
